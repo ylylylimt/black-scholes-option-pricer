@@ -214,3 +214,87 @@ def plot_model_fit(df: pd.DataFrame, ticker: str, save_path: str = None):
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
         print(f"  saved → {save_path}")
     plt.show()
+
+
+# ── 5. Implied vs realized vol ─────────────────────────────────────────────────
+def plot_iv_vs_rv(frame: pd.DataFrame, title: str, save_path: str = None, show: bool = False):
+    """Implied vol against trailing and forward realized vol (all annualised, in %)."""
+    fig, ax = plt.subplots(figsize=(12, 4.5))
+    ax.plot(frame.index, frame["iv"] * 100, color=PUT_COLOR, linewidth=1.1, label="Implied (VIX)")
+    ax.plot(frame.index, frame["rv_forward"] * 100, color=CALL_COLOR, linewidth=1.1,
+            label="Realized, forward 21d")
+    ax.plot(frame.index, frame["rv_trailing"] * 100, color="#888888", linewidth=0.8,
+            alpha=0.8, label="Realized, trailing 21d")
+    ax.set_ylabel("Annualised vol (%)")
+    ax.set_title(title, fontsize=12, fontweight="bold")
+    ax.legend(fontsize=8)
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"  saved → {save_path}")
+    if show:
+        plt.show()
+    plt.close(fig)
+
+
+# ── 6. Variance risk premium ───────────────────────────────────────────────────
+def plot_vrp(frame: pd.DataFrame, title: str, save_path: str = None, show: bool = False):
+    """VRP (IV - forward RV, vol points) through time and its distribution."""
+    fig, axes = plt.subplots(1, 2, figsize=(13, 4.5), gridspec_kw={"width_ratios": [2.2, 1]})
+    vrp = frame["vrp_vol"] * 100
+
+    ax = axes[0]
+    ax.fill_between(frame.index, vrp, 0, where=vrp >= 0, color=CALL_COLOR, alpha=0.35, linewidth=0)
+    ax.fill_between(frame.index, vrp, 0, where=vrp < 0, color=PUT_COLOR, alpha=0.55, linewidth=0)
+    ax.plot(frame.index, vrp.rolling(126).mean(), color="black", linewidth=1.3, label="126d rolling mean")
+    ax.axhline(0, color="black", linewidth=0.8)
+    ax.set_ylabel("IV − forward RV (vol points)")
+    ax.set_title(title, fontsize=11, fontweight="bold")
+    ax.legend(fontsize=8)
+
+    ax = axes[1]
+    ax.hist(vrp, bins=60, color=CALL_COLOR, alpha=0.8, edgecolor="white")
+    ax.axvline(vrp.mean(), color="black", linestyle="--", linewidth=1.2,
+               label=f"mean {vrp.mean():+.1f}")
+    ax.axvline(0, color=PUT_COLOR, linewidth=1.2)
+    ax.set_xlabel("vol points")
+    ax.set_title("Distribution", fontsize=10)
+    ax.legend(fontsize=8)
+
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"  saved → {save_path}")
+    if show:
+        plt.show()
+    plt.close(fig)
+
+
+# ── 7. Delta-hedged P&L ────────────────────────────────────────────────────────
+def plot_hedged_pnl(trades: pd.DataFrame, cum: pd.Series, title: str,
+                    save_path: str = None, show: bool = False):
+    """Cumulative P&L of non-overlapping short-vol trades and per-trade distribution."""
+    fig, axes = plt.subplots(1, 2, figsize=(13, 4.5), gridspec_kw={"width_ratios": [2.2, 1]})
+
+    ax = axes[0]
+    ax.plot(cum.index, cum.values * 100, color=CALL_COLOR, linewidth=1.5)
+    ax.axhline(0, color="black", linewidth=0.8)
+    ax.set_ylabel("Cumulative P&L (sum of % of spot per trade)")
+    ax.set_title(title, fontsize=11, fontweight="bold")
+
+    ax = axes[1]
+    p = trades["pnl_pct"] * 100
+    ax.hist(p, bins=50, color=CALL_COLOR, alpha=0.8, edgecolor="white")
+    ax.axvline(p.mean(), color="black", linestyle="--", linewidth=1.2, label=f"mean {p.mean():+.2f}%")
+    ax.axvline(0, color=PUT_COLOR, linewidth=1.2)
+    ax.set_xlabel("P&L per trade (% of spot)")
+    ax.set_title("Per-trade distribution", fontsize=10)
+    ax.legend(fontsize=8)
+
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"  saved → {save_path}")
+    if show:
+        plt.show()
+    plt.close(fig)

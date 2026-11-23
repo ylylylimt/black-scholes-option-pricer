@@ -12,7 +12,12 @@ A from-scratch implementation of the **Black-Scholes-Merton** options pricing mo
 | `market_data.py` | Fetches live options chains, computes IV for every contract |
 | `visualise.py` | Vol smile, IV surface, Greeks profiles, model fit diagnostics |
 | `main.py` | End-to-end pipeline; runs demos + live analysis |
-| `test_black_scholes.py` | 25 unit tests covering pricing accuracy, Greek properties, IV round-trips |
+| `vol_analysis.py` | Realized vol (trailing / forward), variance risk premium, Newey-West (HAC) inference, forecast regressions |
+| `hedging.py` | Daily delta-hedged short-option simulator and trade statistics |
+| `history.py` | Cached SPY / VIX / T-bill history loader, plus a synthetic market for offline checks |
+| `run_vrp_backtest.py` | End-to-end VRP study and hedged-P&L backtest |
+| `test_black_scholes.py` | Unit tests covering pricing accuracy, Greek properties, IV round-trips |
+| `test_vol_analysis.py`, `test_hedging.py`, `test_history.py` | Tests for the volatility study and the hedging simulator (see below) |
 
 ---
 
@@ -116,7 +121,7 @@ Put    $6.4934   -0.6106  0.000038  -0.037916/day  0.1937/1%σ   -0.0568/1%r
 pytest test_black_scholes.py -v
 ```
 
-25 tests covering:
+62 tests in total. The Black-Scholes suite covers:
 - Analytical price accuracy vs known values
 - Put-call parity (ATM and ITM)
 - Greek signs and relationships (delta bounds, gamma positivity, theta negativity)
@@ -124,6 +129,14 @@ pytest test_black_scholes.py -v
 - Numerical vega vs finite-difference approximation
 - IV round-trip to < 0.0001 accuracy across 5 vol levels
 - Edge cases: intrinsic-only prices, expired options
+
+The volatility and hedging suites check, on synthetic data where the true answer is known:
+- No look-ahead: forward realized vol uses only returns *after* the entry date
+- HAC standard errors match classical ones for i.i.d. data and are several times larger for autocorrelated or overlapping-window data
+- A delta-hedged option earns about zero when realized vol equals implied vol, independent of the real-world drift
+- Short-vol profits when implied > realized and loses when implied < realized
+- Simulated P&L matches the analytic gamma P&L formula trade by trade
+- Transaction costs can only reduce P&L
 
 ---
 
@@ -134,15 +147,59 @@ options_pricer/
 ├── black_scholes.py      # Core BSM engine
 ├── market_data.py        # Live data via yfinance
 ├── visualise.py          # Plotting
+├── vol_analysis.py       # Realized vol, VRP, HAC statistics
+├── hedging.py            # Delta-hedged P&L simulator
+├── history.py            # Historical data loader (+ synthetic market)
+├── run_vrp_backtest.py   # VRP study + hedged-P&L backtest entry point
 ├── main.py               # Pipeline entry point
-├── test_black_scholes.py # Unit tests
+├── test_black_scholes.py # Unit tests: pricer
+├── test_vol_analysis.py  # Unit tests: realized vol / HAC
+├── test_hedging.py       # Unit tests: hedging simulator
+├── test_history.py       # Unit tests: data loader
 ├── requirements.txt
 └── plots/                # Generated on first run
     ├── vol_smile.png
     ├── vol_surface.png
     ├── greeks_profile.png
-    └── model_fit.png
+    ├── model_fit.png
+    ├── iv_vs_rv.png       # from run_vrp_backtest.py
+    ├── vrp.png
+    └── hedged_pnl.png
 ```
+
+---
+
+## Implied vs realized volatility and delta-hedged P&L
+
+Does SPY implied volatility overstate the volatility that is subsequently realized, and can that gap be harvested by selling options and delta-hedging them? `run_vrp_backtest.py` answers both parts.
+
+```bash
+python run_vrp_backtest.py                          # SPY + VIX, 2010 -> today (needs internet)
+python run_vrp_backtest.py --start 2015-01-01 --tc-bps 1
+python run_vrp_backtest.py --hedge-vol daily --moneyness 1.05
+python run_vrp_backtest.py --synthetic              # offline pipeline check on simulated data
+```
+
+### Method
+
+**Variance risk premium.** At each date, implied vol is the VIX (30-day implied vol on the S&P 500). Realized vol is the annualised root-mean-square of daily log returns over the *next* 21 trading days, which is the period an option bought that day would live through. The VRP is IV − RV in vol points and IV² − RV² in variance points. SPY prices are dividend-adjusted, so the series behaves like a total-return index.
+
+**Inference.** Daily observations of a 21-day window overlap by 20/21, so residuals are strongly autocorrelated and naive t-stats are wildly overstated. All t-stats use Newey-West (HAC) standard errors with 21 lags. Two forecast regressions, `RV = a + b·IV` and `RV = a + b·IV + c·RV_trailing`, test whether implied vol is an unbiased forecast (a = 0, b = 1) and whether past realized vol adds information.
+
+**Delta-hedged short call.** Sell a 21-day call at the prevailing implied vol, hedge with the underlying each day using BSM delta, hold to expiry, and measure P&L at expiry as a percentage of spot. Cash earns the T-bill rate, and optional proportional costs are charged on every hedge trade. Headline statistics use non-overlapping trades. The mean is cross-checked on all overlapping start dates with a Newey-West standard error.
+
+### Why you can trust the engine
+
+For a continuously hedged option, P&L is approximately ∫ ½ Γ S² (σ²_implied − σ²_realized) dt. The test suite verifies that the simulator reproduces this formula trade by trade, earns about zero when σ_implied = σ_realized regardless of drift, and has the right sign when they differ.
+
+### Limitations of this study
+
+- **VIX is not an at-the-money implied vol.** It is a model-free variance measure that includes out-of-the-money puts, so it typically sits above ATM implied vol. Using it to price an ATM option overstates the premium collected.
+- **No option bid/ask.** Options are priced at the VIX-implied BSM value, so results are an upper bound on what a real desk could capture. `--tc-bps` covers hedge costs in the underlying only.
+- **Timing.** Daily closes only. The VIX is computed from option prices at a slightly different time than the SPY close.
+- **Constant r per trade**, set at entry, and a single underlying.
+- **Sample dependence.** A short-vol strategy looks best in calm regimes. Results depend heavily on whether the sample includes volatility spikes, so look at the worst trades the script prints, not only the mean.
+- **Overlapping observations** reduce the effective sample size even after HAC corrections.
 
 ---
 
