@@ -13,3 +13,6 @@ plots/
 .DS_Store
 .idea/
 .vscode/
+
+# Local data cache (re-created by run_vrp_backtest.py)
+data/

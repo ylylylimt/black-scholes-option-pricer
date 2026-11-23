@@ -91,7 +91,7 @@ class TestGreeks:
         """Δ_call + |Δ_put| ≈ 1  (put-call delta parity)."""
         c = price(**atm_params, option_type="call")
         p = price(**atm_params, option_type="put")
-        assert abs(c.delta + p.delta - 1.0) < 1e-4
+        assert abs(c.delta - p.delta - 1.0) < 1e-4
 
     def test_gamma_positive(self, atm_params):
         """Gamma is always positive for both calls and puts."""
